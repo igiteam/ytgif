@@ -401,6 +401,7 @@ const STORAGE_KEY_URL  = 'yt2gif_last_yt_url';
 let ytPlayer = null;
 let ytReady  = false;
 let ytApiLoaded = false;
+let ytLoopTimer = null;
 let videoId  = null;
 let sourceMode = 'youtube';   // 'youtube' | 'local'
 let localVideoEl = null;
@@ -425,9 +426,9 @@ let currentFilter = 'none';
 })();
 
 /**
- * Extracts a YouTube video ID from standard, mobile (m.youtube.com),
- * music (music.youtube.com), short (youtu.be), embed, shorts, live URLs,
- * or raw video IDs.
+- Extracts a YouTube video ID from standard, mobile (m.youtube.com),
+- music (music.youtube.com), short (youtu.be), embed, shorts, live URLs,
+- or raw video IDs.
  */
 function extractId(input){
   if (!input) return null;
@@ -472,8 +473,8 @@ function extractId(input){
 }
 
 /**
- * Reads ?url=, ?v=, ?youtube=, or #... from a full href, including unencoded
- * nested YouTube URLs like ?url=https://www.youtube.com/watch?v=ZIvG2CsETMk.
+- Reads ?url=, ?v=, ?youtube=, or #... from a full href, including unencoded
+- nested YouTube URLs like ?url=https://www.youtube.com/watch?v=ZIvG2CsETMk.
  */
 function extractSourceFromHref(hrefStr){
   if (!hrefStr) return null;
@@ -538,6 +539,51 @@ function getInitialYouTubeSource(){
   return null;
 }
 
+/* ---------------- YouTube clip loop controller ---------------- */
+function stopYTLoop(){
+  if (ytLoopTimer){
+    clearInterval(ytLoopTimer);
+    ytLoopTimer = null;
+  }
+}
+
+function startYTLoop(){
+  stopYTLoop();
+  if (!ytPlayer || !ytReady || sourceMode !== 'youtube') return;
+
+  const start    = Math.max(0, parseFloat($('start').value) || 0);
+  const duration = Math.max(0.1, parseFloat($('duration').value) || 3);
+  const speed    = parseFloat($('speed').value) || 1;
+  const endTime  = start + duration;
+
+  try{
+    if (typeof ytPlayer.setPlaybackRate === 'function'){
+      ytPlayer.setPlaybackRate(speed);
+    }
+    ytPlayer.seekTo(start, true);
+    if (typeof ytPlayer.playVideo === 'function'){
+      ytPlayer.playVideo();
+    }
+  }catch{}
+
+  ytLoopTimer = setInterval(() => {
+    if (!ytPlayer || !ytReady || sourceMode !== 'youtube') return;
+    try{
+      const now = ytPlayer.getCurrentTime();
+      if (typeof now === 'number' && now >= endTime - 0.08){
+        if ($('loopforever').checked){
+          ytPlayer.seekTo(start, true);
+        } else {
+          if (typeof ytPlayer.pauseVideo === 'function'){
+            ytPlayer.pauseVideo();
+          }
+          stopYTLoop();
+        }
+      }
+    }catch{}
+  }, 100);
+}
+
 function loadYouTubeSource(rawUrl, { persist = true } = {}){
   const trimmed = (rawUrl || '').trim();
   const id = extractId(trimmed);
@@ -546,6 +592,7 @@ function loadYouTubeSource(rawUrl, { persist = true } = {}){
     return false;
   }
 
+  stopYTLoop();
   const canonicalUrl = /^https?:\/\//i.test(trimmed)
     ? trimmed
     : `https://www.youtube.com/watch?v=${id}`;
@@ -566,8 +613,8 @@ function loadYouTubeSource(rawUrl, { persist = true } = {}){
   if (window.YT && window.YT.Player){
     createYT(id);
   } else {
-    // Fallback iframe if YT API is slow or blocked
-    $('previewCard').innerHTML = `<iframe src="https://www.youtube.com/embed/${encodeURIComponent(id)}?autoplay=1&playsinline=1&rel=0" allow="autoplay; encrypted-media; picture-in-picture" allowfullscreen></iframe>`;
+    // Fallback embed with controls disabled if YT API hasn't loaded yet
+    $('previewCard').innerHTML = `<iframe src="https://www.youtube.com/embed/${encodeURIComponent(id)}?autoplay=1&controls=0&modestbranding=1&rel=0&playsinline=1" allow="autoplay; encrypted-media; picture-in-picture" allowfullscreen></iframe>`;
     $('metaInfo').textContent = `YouTube · ${id}`;
     $('grabBtn').disabled = false;
   }
@@ -575,6 +622,7 @@ function loadYouTubeSource(rawUrl, { persist = true } = {}){
 }
 
 function createYT(id){
+  stopYTLoop();
   if (ytPlayer && typeof ytPlayer.destroy === 'function'){
     try{ ytPlayer.destroy(); }catch{}
     ytPlayer = null;
@@ -584,12 +632,11 @@ function createYT(id){
 
   ytPlayer = new YT.Player('yt', {
     videoId: id,
-    playerVars: { autoplay:1, controls:1, modestbranding:1, rel:0, playsinline:1 },
+    playerVars: { autoplay:1, controls:0, modestbranding:1, rel:0, playsinline:1 },
     events:{
       onReady: () => {
         ytReady = true;
         $('grabBtn').disabled = false;
-        status('Player ready. Pick a clip, then Create GIF (or use a local file).');
         const dur = ytPlayer.getDuration();
         if (dur > 0){
           $('start').max = Math.max(1, Math.floor(dur));
@@ -597,8 +644,11 @@ function createYT(id){
         } else {
           $('metaInfo').textContent = `YouTube · ${id}`;
         }
+        status('Player ready. Controls hidden; looping selected clip.');
+        startYTLoop();
       },
       onError: e => {
+        stopYTLoop();
         const errMap = {
           2: 'Invalid video ID',
           5: 'HTML5 player error',
@@ -658,6 +708,7 @@ $('localBtn').onclick = () => $('fileInput').click();
 $('fileInput').onchange = e => {
   const f = e.target.files[0];
   if (!f) return;
+  stopYTLoop();
   sourceMode = 'local';
   if (ytPlayer && ytPlayer.destroy){ ytPlayer.destroy(); ytPlayer = null; }
   ytReady = false;
@@ -695,12 +746,29 @@ syncSlider('start','startVal');
 syncSlider('duration','durationVal');
 syncSlider('speed','speedVal','×');
 
+$('start').addEventListener('change', () => {
+  if (sourceMode === 'youtube' && ytReady) startYTLoop();
+});
+$('duration').addEventListener('change', () => {
+  if (sourceMode === 'youtube' && ytReady) startYTLoop();
+});
+$('speed').addEventListener('change', () => {
+  if (sourceMode === 'youtube' && ytReady) startYTLoop();
+});
+$('loopforever').addEventListener('change', () => {
+  if (sourceMode === 'youtube' && ytReady){
+    if ($('loopforever').checked) startYTLoop();
+    else stopYTLoop();
+  }
+});
+
 document.querySelectorAll('.stepper button').forEach(btn => {
   btn.onclick = () => {
     const t = $(btn.dataset.target);
     const step = parseFloat(btn.dataset.step);
     t.value = Math.min(t.max, Math.max(t.min, parseFloat(t.value) + step));
     t.dispatchEvent(new Event('input'));
+    if (sourceMode === 'youtube' && ytReady) startYTLoop();
   };
 });
 
