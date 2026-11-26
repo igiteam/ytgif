@@ -4,6 +4,27 @@
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
 <title>YouTube → GIF Editor</title>
+<meta name="description" content="Turn video clips into GIFs in your browser with trim controls, speed, filters, and ping-pong looping.">
+<meta name="theme-color" content="#0f0f10">
+
+<!-- Icons -->
+<link rel="icon" type="image/png" href="https://raw.githubusercontent.com/igiteam/ytgif/refs/heads/main/ytgif.png">
+<link rel="apple-touch-icon" href="https://raw.githubusercontent.com/igiteam/ytgif/refs/heads/main/ytgif.png">
+
+<!-- Open Graph -->
+<meta property="og:type" content="website">
+<meta property="og:title" content="YouTube → GIF Editor">
+<meta property="og:description" content="Turn video clips into GIFs in your browser with trim controls, speed, filters, and ping-pong looping.">
+<meta property="og:url" content="https://ytgif.macosxjs.com/">
+<meta property="og:image" content="https://raw.githubusercontent.com/igiteam/ytgif/refs/heads/main/ytgif.png">
+<meta property="og:image:alt" content="yt→gif icon">
+
+<!-- Twitter / X -->
+<meta name="twitter:card" content="summary">
+<meta name="twitter:title" content="YouTube → GIF Editor">
+<meta name="twitter:description" content="Turn video clips into GIFs in your browser with trim controls, speed, filters, and ping-pong looping.">
+<meta name="twitter:image" content="https://raw.githubusercontent.com/igiteam/ytgif/refs/heads/main/ytgif.png">
+<meta name="twitter:image:alt" content="yt→gif icon">
 <style>
   :root{
     --bg:#0f0f10; --panel:#1a1a1c; --panel2:#232326; --line:#2e2e32;
@@ -58,13 +79,6 @@
     font-size:13px; font-weight:600; letter-spacing:.2px;
   }
   .card__body{padding:14px}
-
-  .icon-btn{
-    width:26px;height:26px;display:grid;place-items:center;
-    background:var(--panel2);border:1px solid var(--line);border-radius:6px;
-    color:#ddd;cursor:pointer;font-size:14px;line-height:1;
-  }
-  .icon-btn:hover{background:#2c2c30;border-color:#3a3a40}
 
   /* source input */
   .source-row{display:flex;gap:8px}
@@ -380,9 +394,13 @@ const progress = p => {
   if (p != null) $('progressBar').style.width = (p * 100).toFixed(1) + '%';
 };
 
+const STORAGE_KEY_HREF = 'yt2gif_last_href';
+const STORAGE_KEY_URL  = 'yt2gif_last_yt_url';
+
 /* ---------------- state ---------------- */
 let ytPlayer = null;
 let ytReady  = false;
+let ytApiLoaded = false;
 let videoId  = null;
 let sourceMode = 'youtube';   // 'youtube' | 'local'
 let localVideoEl = null;
@@ -390,29 +408,180 @@ let currentFilter = 'none';
 
 /* ---------------- YouTube iframe API ---------------- */
 (function loadYT(){
+  if (window.YT && window.YT.Player){
+    ytApiLoaded = true;
+    return;
+  }
+  const prevCallback = window.onYouTubeIframeAPIReady;
+  window.onYouTubeIframeAPIReady = () => {
+    ytApiLoaded = true;
+    if (typeof prevCallback === 'function') prevCallback();
+    if (videoId && sourceMode === 'youtube') createYT(videoId);
+  };
   const s = document.createElement('script');
   s.src = 'https://www.youtube.com/iframe_api';
+  s.async = true;
   document.head.appendChild(s);
 })();
 
-window.onYouTubeIframeAPIReady = () => {
-  if (videoId) createYT(videoId);
-};
+/**
+ * Extracts a YouTube video ID from standard, mobile (m.youtube.com),
+ * music (music.youtube.com), short (youtu.be), embed, shorts, live URLs,
+ * or raw video IDs.
+ */
+function extractId(input){
+  if (!input) return null;
+  const raw = String(input).trim();
+  if (/^[a-zA-Z0-9_-]{10,12}$/.test(raw)) return raw;
 
-function extractId(url){
+  const normalized = /^https?:\/\//i.test(raw) ? raw : 'https://' + raw;
   try{
-    const u = new URL(url);
-    if (u.hostname.includes('youtu.be')) return u.pathname.slice(1).split('/')[0];
-    if (u.searchParams.get('v')) return u.searchParams.get('v');
-    const m = u.pathname.match(/\/embed\/([^/?]+)/);
-    if (m) return m[1];
+    const u = new URL(normalized);
+    const host = u.hostname.replace(/^www\./, '').toLowerCase();
+
+    const isYT =
+      host === 'youtube.com' ||
+      host.endsWith('.youtube.com') ||
+      host === 'youtube-nocookie.com' ||
+      host.endsWith('.youtube-nocookie.com');
+
+    if (host === 'youtu.be'){
+      const seg = u.pathname.split('/').filter(Boolean)[0];
+      return seg && /^[a-zA-Z0-9_-]{10,12}$/.test(seg) ? seg : null;
+    }
+
+    if (isYT){
+      const vParam = u.searchParams.get('v');
+      if (vParam && /^[a-zA-Z0-9_-]{10,12}$/.test(vParam)) return vParam;
+
+      const parts = u.pathname.split('/').filter(Boolean);
+      const prefixes = ['embed', 'v', 'e', 'shorts', 'live', 'watch'];
+      for (let i = 0; i < parts.length; i++){
+        if (prefixes.includes(parts[i]) && parts[i + 1] && /^[a-zA-Z0-9_-]{10,12}$/.test(parts[i + 1])){
+          return parts[i + 1];
+        }
+      }
+      if (parts.length === 1 && /^[a-zA-Z0-9_-]{10,12}$/.test(parts[0])){
+        return parts[0];
+      }
+    }
   }catch{}
+
+  const fallback = raw.match(/(?:youtu\.be\/|(?:[\w-]+\.)?youtube\.com\/(?:watch\?.*v=|embed\/|v\/|shorts\/|live\/))([a-zA-Z0-9_-]{10,12})/);
+  return fallback ? fallback[1] : null;
+}
+
+/**
+ * Reads ?url=, ?v=, ?youtube=, or #... from a full href, including unencoded
+ * nested YouTube URLs like ?url=https://www.youtube.com/watch?v=ZIvG2CsETMk.
+ */
+function extractSourceFromHref(hrefStr){
+  if (!hrefStr) return null;
+  try{
+    const u = new URL(hrefStr);
+    const direct =
+      u.searchParams.get('url') ||
+      u.searchParams.get('v') ||
+      u.searchParams.get('youtube');
+    if (direct && extractId(direct)) return direct;
+
+    // Handle nested ?url=https://www.youtube.com/watch?v=... where outer URL()
+    // may have unencoded inner query params
+    const rawMatch = hrefStr.match(/[?&](?:url|v|youtube)=([^#]+)/i);
+    if (rawMatch && rawMatch[1]){
+      const decoded = decodeURIComponent(rawMatch[1]);
+      if (extractId(decoded)) return decoded;
+      if (extractId(rawMatch[1])) return rawMatch[1];
+    }
+
+    if (u.hash && u.hash.length > 1){
+      const hashDecoded = decodeURIComponent(u.hash.slice(1));
+      if (extractId(hashDecoded)) return hashDecoded;
+    }
+  }catch{
+    const match = String(hrefStr).match(/(https?:\/\/(?:[\w-]+\.)?youtube\.com\/watch\?[^\s#&]+|https?:\/\/youtu\.be\/[^\s#?&]+)/i);
+    if (match && extractId(match[1])) return match[1];
+  }
   return null;
 }
 
+function saveLocationHref(){
+  try{
+    localStorage.setItem(STORAGE_KEY_HREF, window.location.href);
+  }catch{}
+}
+
+function saveLastYouTubeUrl(urlStr){
+  try{
+    localStorage.setItem(STORAGE_KEY_URL, urlStr);
+  }catch{}
+}
+
+function getInitialYouTubeSource(){
+  // 1. Current window.location.href
+  const fromCurrentHref = extractSourceFromHref(window.location.href);
+  if (fromCurrentHref) return fromCurrentHref;
+
+  // 2. Saved YouTube URL in localStorage
+  try{
+    const savedUrl = localStorage.getItem(STORAGE_KEY_URL);
+    if (savedUrl && extractId(savedUrl)) return savedUrl;
+  }catch{}
+
+  // 3. Saved window.location.href in localStorage
+  try{
+    const savedHref = localStorage.getItem(STORAGE_KEY_HREF);
+    const fromSavedHref = extractSourceFromHref(savedHref);
+    if (fromSavedHref) return fromSavedHref;
+  }catch{}
+
+  return null;
+}
+
+function loadYouTubeSource(rawUrl, { persist = true } = {}){
+  const trimmed = (rawUrl || '').trim();
+  const id = extractId(trimmed);
+  if (!id){
+    status('That doesn’t look like a valid YouTube URL (youtube.com, m.youtube.com, youtu.be, shorts, embed…).');
+    return false;
+  }
+
+  const canonicalUrl = /^https?:\/\//i.test(trimmed)
+    ? trimmed
+    : `https://www.youtube.com/watch?v=${id}`;
+
+  $('url').value = canonicalUrl;
+  videoId = id;
+  sourceMode = 'youtube';
+  ytReady = false;
+  $('grabBtn').disabled = true;
+  $('result').classList.remove('show');
+
+  if (persist){
+    saveLastYouTubeUrl(canonicalUrl);
+    saveLocationHref();
+  }
+
+  status('Loading player…');
+  if (window.YT && window.YT.Player){
+    createYT(id);
+  } else {
+    // Fallback iframe if YT API is slow or blocked
+    $('previewCard').innerHTML = `<iframe src="https://www.youtube.com/embed/${encodeURIComponent(id)}?autoplay=1&playsinline=1&rel=0" allow="autoplay; encrypted-media; picture-in-picture" allowfullscreen></iframe>`;
+    $('metaInfo').textContent = `YouTube · ${id}`;
+    $('grabBtn').disabled = false;
+  }
+  return true;
+}
+
 function createYT(id){
+  if (ytPlayer && typeof ytPlayer.destroy === 'function'){
+    try{ ytPlayer.destroy(); }catch{}
+    ytPlayer = null;
+  }
   $('previewCard').innerHTML = '<div id="yt"></div>';
   $('previewCard').style.aspectRatio = '16 / 9';
+
   ytPlayer = new YT.Player('yt', {
     videoId: id,
     playerVars: { autoplay:1, controls:1, modestbranding:1, rel:0, playsinline:1 },
@@ -422,10 +591,23 @@ function createYT(id){
         $('grabBtn').disabled = false;
         status('Player ready. Pick a clip, then Create GIF (or use a local file).');
         const dur = ytPlayer.getDuration();
-        $('start').max = Math.max(1, Math.floor(dur));
-        $('metaInfo').textContent = `${fmt(dur)} · ${id}`;
+        if (dur > 0){
+          $('start').max = Math.max(1, Math.floor(dur));
+          $('metaInfo').textContent = `${fmt(dur)} · ${id}`;
+        } else {
+          $('metaInfo').textContent = `YouTube · ${id}`;
+        }
       },
-      onError: e => status('YouTube player error: ' + e.data)
+      onError: e => {
+        const errMap = {
+          2: 'Invalid video ID',
+          5: 'HTML5 player error',
+          100: 'Video not found or private',
+          101: 'Embedding disabled by owner',
+          150: 'Embedding disabled by owner'
+        };
+        status(`YouTube player error (${e.data}): ${errMap[e.data] || 'playback blocked'}`);
+      }
     }
   });
 }
@@ -435,18 +617,41 @@ function fmt(s){
   return `${Math.floor(s/60)}:${String(s%60).padStart(2,'0')}`;
 }
 
-/* ---------------- load button ---------------- */
+/* ---------------- persist & restore window.location.href ---------------- */
+function initFromHrefAndStorage(){
+  saveLocationHref();
+  const initialSource = getInitialYouTubeSource();
+  if (initialSource){
+    loadYouTubeSource(initialSource, { persist: true });
+  }
+}
+
+window.addEventListener('DOMContentLoaded', initFromHrefAndStorage);
+window.addEventListener('hashchange', () => {
+  saveLocationHref();
+  const fromHash = extractSourceFromHref(window.location.href);
+  if (fromHash) loadYouTubeSource(fromHash, { persist: true });
+});
+window.addEventListener('popstate', () => {
+  saveLocationHref();
+  const fromPop = extractSourceFromHref(window.location.href);
+  if (fromPop) loadYouTubeSource(fromPop, { persist: true });
+});
+
+// Run immediately as well in case DOMContentLoaded already fired
+initFromHrefAndStorage();
+
+/* ---------------- load button & input ---------------- */
 $('loadBtn').onclick = () => {
-  const id = extractId($('url').value.trim());
-  if (!id){ status('That doesn’t look like a YouTube URL.'); return; }
-  videoId = id;
-  sourceMode = 'youtube';
-  ytReady = false;
-  $('grabBtn').disabled = true;
-  $('result').classList.remove('show');
-  status('Loading player…');
-  if (window.YT && window.YT.Player) createYT(id);
+  loadYouTubeSource($('url').value, { persist: true });
 };
+
+$('url').addEventListener('keydown', e => {
+  if (e.key === 'Enter'){
+    e.preventDefault();
+    loadYouTubeSource($('url').value, { persist: true });
+  }
+});
 
 /* ---------------- local file ---------------- */
 $('localBtn').onclick = () => $('fileInput').click();
@@ -534,7 +739,6 @@ $('grabBtn').onclick = async () => {
   const frameCount = Math.max(1, Math.floor(duration * effectiveFps));
 
   if (sourceMode === 'youtube'){
-    // honest failure path: show a clear message, not a silent TypeError
     status(
       'Browser security blocks reading YouTube pixels (cross-origin). ' +
       'Use “Use local file…” — same pipeline, works instantly.'
@@ -545,7 +749,6 @@ $('grabBtn').onclick = async () => {
   const v = localVideoEl;
   if (!v || !v.duration){ status('Load a local video first.'); return; }
 
-  // canvas sized from video
   const vw = v.videoWidth  || 1280;
   const vh = v.videoHeight || 720;
   const scale = targetW / vw;
@@ -567,7 +770,6 @@ $('grabBtn').onclick = async () => {
   status(`Grabbing ${frameCount} frames…`);
   progress(0);
 
-  // pause local video while we seek around
   v.pause();
 
   const frames = [];
@@ -576,13 +778,11 @@ $('grabBtn').onclick = async () => {
     await seek(v, t);
     ctx.filter = currentFilter;
     ctx.drawImage(v, 0, 0, outW, outH);
-    // snapshot as ImageData → ImageBitmap so gif.js doesn't reuse the canvas
     const bmp = await createImageBitmap(canvas);
     frames.push(bmp);
     progress((i + 1) / frameCount);
   }
 
-  // optional ping-pong: append reversed frames (skip first & last to avoid dupes)
   if (pingpong && frames.length > 2){
     for (let i = frames.length - 2; i > 0; i--) frames.push(frames[i]);
   }
@@ -609,7 +809,6 @@ $('grabBtn').onclick = async () => {
   gif.render();
 };
 
-/* promise wrapper around video seek */
 function seek(video, time){
   return new Promise(resolve => {
     const done = () => {
@@ -618,7 +817,6 @@ function seek(video, time){
     };
     video.addEventListener('seeked', done);
     video.currentTime = Math.min(time, (video.duration || 0) - 0.001);
-    // safety timeout
     setTimeout(done, 1500);
   });
 }
