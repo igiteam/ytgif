@@ -1,0 +1,627 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>YouTube → GIF Editor</title>
+<style>
+  :root{
+    --bg:#0f0f10; --panel:#1a1a1c; --panel2:#232326; --line:#2e2e32;
+    --text:#ececec; --muted:#9a9aa0; --accent:#ff3b3b; --accent2:#ff5c5c;
+    --radius:10px;
+  }
+  *{box-sizing:border-box;margin:0;padding:0}
+  html,body{height:100%}
+  body{
+    font-family:system-ui,-apple-system,"Segoe UI",Roboto,sans-serif;
+    background:var(--bg); color:var(--text);
+    display:flex; flex-direction:column; min-height:100vh;
+  }
+
+  /* ---- top bar ---- */
+  .topbar{
+    display:flex; align-items:center; gap:10px;
+    padding:12px 20px; border-bottom:1px solid var(--line);
+    background:var(--panel);
+  }
+  .topbar .logo{font-weight:800;letter-spacing:.3px;color:#fff}
+  .topbar .logo span{color:var(--accent)}
+  .topbar .spacer{flex:1}
+  .topbar .badge{
+    font-size:11px;color:var(--muted);border:1px solid var(--line);
+    padding:3px 8px;border-radius:99px;
+  }
+
+  /* ---- editor shell ---- */
+  .editor{
+    flex:1; display:grid;
+    grid-template-columns: 340px 1fr;
+    gap:16px; padding:16px; max-width:1400px; width:100%; margin:0 auto;
+  }
+  @media (max-width:900px){ .editor{grid-template-columns:1fr;} }
+
+  /* ---- left column: settings ---- */
+  .settings{
+    display:flex; flex-direction:column; gap:12px;
+    max-height:calc(100vh - 90px); overflow:auto; padding-right:4px;
+  }
+  .settings::-webkit-scrollbar{width:6px}
+  .settings::-webkit-scrollbar-thumb{background:#333;border-radius:3px}
+
+  .card{
+    background:var(--panel); border:1px solid var(--line);
+    border-radius:var(--radius); overflow:hidden;
+  }
+  .card__head{
+    display:flex; align-items:center; justify-content:space-between;
+    padding:12px 14px; border-bottom:1px solid var(--line);
+    font-size:13px; font-weight:600; letter-spacing:.2px;
+  }
+  .card__body{padding:14px}
+
+  .icon-btn{
+    width:26px;height:26px;display:grid;place-items:center;
+    background:var(--panel2);border:1px solid var(--line);border-radius:6px;
+    color:#ddd;cursor:pointer;font-size:14px;line-height:1;
+  }
+  .icon-btn:hover{background:#2c2c30;border-color:#3a3a40}
+
+  /* source input */
+  .source-row{display:flex;gap:8px}
+  .source-row input{
+    flex:1;min-width:0;background:#121214;border:1px solid var(--line);
+    color:var(--text);padding:10px 12px;border-radius:8px;font-size:14px;
+  }
+  .source-row input:focus{outline:none;border-color:var(--accent)}
+  .source-row button{
+    background:var(--accent);color:#fff;border:none;border-radius:8px;
+    padding:0 16px;font-weight:600;cursor:pointer;font-size:13px;white-space:nowrap;
+  }
+  .source-row button:hover{background:var(--accent2)}
+
+  /* sliders */
+  .slider-block{margin-bottom:16px}
+  .slider-block:last-child{margin-bottom:0}
+  .slider-head{
+    display:flex;justify-content:space-between;align-items:center;
+    font-size:12px;color:var(--muted);margin-bottom:6px;
+  }
+  .slider-head b{color:var(--text);font-variant-numeric:tabular-nums}
+  .slider-head .stepper{display:flex;gap:4px;align-items:center}
+  .stepper button{
+    width:24px;height:24px;border-radius:6px;border:1px solid var(--line);
+    background:var(--panel2);color:#ddd;cursor:pointer;font-size:14px;line-height:1;
+  }
+  .stepper button:hover{background:#2c2c30}
+  input[type=range]{
+    -webkit-appearance:none;width:100%;height:4px;border-radius:2px;
+    background:#333;outline:none;
+  }
+  input[type=range]::-webkit-slider-thumb{
+    -webkit-appearance:none;width:16px;height:16px;border-radius:50%;
+    background:var(--accent);cursor:pointer;border:2px solid #fff2;
+  }
+  input[type=range]::-moz-range-thumb{
+    width:16px;height:16px;border-radius:50%;background:var(--accent);
+    cursor:pointer;border:2px solid #fff2;
+  }
+
+  .grid2{display:grid;grid-template-columns:1fr 1fr;gap:10px}
+
+  .field{display:flex;flex-direction:column;gap:6px;font-size:12px;color:var(--muted)}
+  .field select,.field input[type=number]{
+    background:#121214;border:1px solid var(--line);color:var(--text);
+    padding:8px 10px;border-radius:8px;font-size:13px;
+  }
+  .field select:focus,.field input:focus{outline:none;border-color:var(--accent)}
+
+  /* toggles */
+  .toggle-row{
+    display:flex;align-items:center;justify-content:space-between;
+    font-size:13px;padding:8px 0;
+  }
+  .switch{
+    position:relative;width:38px;height:22px;flex-shrink:0;
+  }
+  .switch input{opacity:0;width:0;height:0}
+  .switch span{
+    position:absolute;inset:0;background:#333;border-radius:99px;
+    cursor:pointer;transition:.2s;
+  }
+  .switch span::before{
+    content:"";position:absolute;width:16px;height:16px;left:3px;top:3px;
+    background:#fff;border-radius:50%;transition:.2s;
+  }
+  .switch input:checked + span{background:var(--accent)}
+  .switch input:checked + span::before{transform:translateX(16px)}
+
+  /* filters */
+  .filters{display:grid;grid-template-columns:repeat(4,1fr);gap:6px}
+  .filter{
+    aspect-ratio:1/1;border-radius:8px;border:1px solid var(--line);
+    background:linear-gradient(135deg,#3a3a3f,#1f1f22);
+    cursor:pointer;font-size:10px;color:#bbb;display:grid;place-items:end center;
+    padding-bottom:4px;transition:.15s;overflow:hidden;position:relative;
+  }
+  .filter:hover{border-color:#555}
+  .filter.active{border-color:var(--accent);color:#fff;box-shadow:0 0 0 1px var(--accent) inset}
+
+  /* ---- right column: preview ---- */
+  .preview-col{display:flex;flex-direction:column;gap:12px;min-width:0}
+
+  .preview-card{
+    background:#000;border:1px solid var(--line);border-radius:var(--radius);
+    overflow:hidden;position:relative;aspect-ratio:16/9;width:100%;
+  }
+  .preview-card iframe,.preview-card video,.preview-card canvas{
+    position:absolute;inset:0;width:100%;height:100%;border:0;display:block;
+  }
+  .preview-card .empty{
+    position:absolute;inset:0;display:grid;place-items:center;text-align:center;
+    color:var(--muted);font-size:14px;padding:20px;background:#0b0b0c;
+  }
+  .preview-card .empty b{color:#fff;display:block;margin-bottom:6px;font-size:16px}
+
+  .preview-footer{
+    display:flex;align-items:center;gap:10px;padding:10px 14px;
+    border-top:1px solid var(--line);background:var(--panel);
+    flex-wrap:wrap;font-size:12px;color:var(--muted);
+  }
+  .preview-footer .spacer{flex:1}
+
+  .quality-pills{display:flex;gap:6px}
+  .pill{
+    padding:5px 12px;border-radius:99px;border:1px solid var(--line);
+    background:var(--panel2);color:#bbb;font-size:12px;cursor:pointer;
+  }
+  .pill:hover{background:#2c2c30}
+  .pill.active{background:var(--accent);border-color:var(--accent);color:#fff;font-weight:600}
+
+  .actions{
+    display:flex;gap:10px;justify-content:flex-end;padding-top:4px;
+    flex-wrap:wrap;
+  }
+  .btn{
+    border:none;border-radius:8px;padding:12px 20px;font-size:14px;
+    font-weight:600;cursor:pointer;
+  }
+  .btn.secondary{background:var(--panel2);color:#ddd;border:1px solid var(--line)}
+  .btn.secondary:hover{background:#2c2c30}
+  .btn.primary{background:var(--accent);color:#fff}
+  .btn.primary:hover{background:var(--accent2)}
+  .btn:disabled{opacity:.45;cursor:not-allowed}
+
+  .status{
+    font-size:12px;color:var(--muted);padding:2px 2px 0;
+    min-height:18px;
+  }
+  .progress{
+    height:4px;background:#222;border-radius:2px;overflow:hidden;display:none;
+  }
+  .progress > div{height:100%;width:0;background:var(--accent);transition:width .15s}
+
+  .result{
+    background:var(--panel);border:1px solid var(--line);border-radius:var(--radius);
+    padding:14px;display:none;
+  }
+  .result.show{display:block}
+  .result img{max-width:100%;border-radius:8px;display:block;margin-bottom:10px}
+  .result a{color:var(--accent2);font-size:13px;font-weight:600;text-decoration:none}
+
+  .hint{
+    font-size:12px;color:var(--muted);line-height:1.5;
+    background:var(--panel);border:1px dashed var(--line);
+    border-radius:var(--radius);padding:12px 14px;
+  }
+  .hint b{color:#ddd}
+</style>
+</head>
+<body>
+
+<div class="topbar">
+  <div class="logo">yt<span>→</span>gif</div>
+  <div class="spacer"></div>
+  <span class="badge">frontend only · no upload</span>
+</div>
+
+<div class="editor">
+
+  <!-- ================= LEFT: SETTINGS ================= -->
+  <aside class="settings">
+
+    <!-- SOURCE -->
+    <div class="card">
+      <div class="card__head">Source</div>
+      <div class="card__body">
+        <div class="source-row">
+          <input id="url" type="url" placeholder="Paste YouTube URL" spellcheck="false" autocomplete="off">
+          <button id="loadBtn">Load</button>
+        </div>
+      </div>
+    </div>
+
+    <!-- CLIP -->
+    <div class="card">
+      <div class="card__head">Clip</div>
+      <div class="card__body">
+
+        <div class="slider-block">
+          <div class="slider-head">
+            <span>Start</span>
+            <span class="stepper">
+              <button data-step="-0.1" data-target="start">−</button>
+              <b id="startVal">0.0s</b>
+              <button data-step="0.1" data-target="start">+</button>
+            </span>
+          </div>
+          <input id="start" type="range" min="0" max="60" step="0.1" value="0">
+        </div>
+
+        <div class="slider-block">
+          <div class="slider-head">
+            <span>Length</span>
+            <span class="stepper">
+              <button data-step="-0.1" data-target="duration">−</button>
+              <b id="durationVal">3.0s</b>
+              <button data-step="0.1" data-target="duration">+</button>
+            </span>
+          </div>
+          <input id="duration" type="range" min="0.3" max="10" step="0.1" value="3">
+        </div>
+
+        <div class="slider-block">
+          <div class="slider-head">
+            <span>Speed</span>
+            <b id="speedVal">1.0×</b>
+          </div>
+          <input id="speed" type="range" min="0.5" max="2" step="0.25" value="1">
+        </div>
+
+        <div class="grid2" style="margin-top:14px">
+          <label class="field">
+            FPS
+            <input id="fps" type="number" min="1" max="24" value="10">
+          </label>
+          <label class="field">
+            Width (px)
+            <input id="width" type="number" min="120" max="960" step="20" value="480">
+          </label>
+        </div>
+      </div>
+    </div>
+
+    <!-- FILTERS -->
+    <div class="card">
+      <div class="card__head">Filters</div>
+      <div class="card__body">
+        <div class="filters" id="filters">
+          <button class="filter active" data-filter="none"       style="background:linear-gradient(135deg,#3a3a3f,#1f1f22)">None</button>
+          <button class="filter" data-filter="grayscale(1)" style="background:linear-gradient(135deg,#555,#222)">B&amp;W</button>
+          <button class="filter" data-filter="sepia(1)"     style="background:linear-gradient(135deg,#8a6a3a,#2a2010)">Sepia</button>
+          <button class="filter" data-filter="invert(1)"    style="background:linear-gradient(135deg,#fff,#000)">Invert</button>
+          <button class="filter" data-filter="blur(2px)"    style="background:linear-gradient(135deg,#4a6a8a,#1a2a3a)">Blur</button>
+          <button class="filter" data-filter="brightness(1.4)" style="background:linear-gradient(135deg,#ffd,#aa8)">Bright</button>
+          <button class="filter" data-filter="contrast(1.5)" style="background:linear-gradient(135deg,#000,#fff)">Contrast</button>
+          <button class="filter" data-filter="hue-rotate(90deg)" style="background:linear-gradient(135deg,#f0f,#0ff)">Hue</button>
+        </div>
+      </div>
+    </div>
+
+    <!-- OPTIONS -->
+    <div class="card">
+      <div class="card__head">Options</div>
+      <div class="card__body">
+        <div class="toggle-row">
+          <span>Ping-pong (boomerang)</span>
+          <label class="switch"><input type="checkbox" id="pingpong"><span></span></label>
+        </div>
+        <div class="toggle-row">
+          <span>Loop forever</span>
+          <label class="switch"><input type="checkbox" id="loopforever" checked><span></span></label>
+        </div>
+      </div>
+    </div>
+
+  </aside>
+
+  <!-- ================= RIGHT: PREVIEW ================= -->
+  <main class="preview-col">
+
+    <div class="preview-card" id="previewCard">
+      <div class="empty" id="emptyState">
+        <div>
+          <b>No video loaded</b>
+          Paste a YouTube URL on the left and hit Load.<br>
+          <span style="font-size:12px">Then pick a clip and create your GIF.</span>
+        </div>
+      </div>
+    </div>
+
+    <div class="preview-footer">
+      <span>Quality</span>
+      <div class="quality-pills" id="qualityPills">
+        <button class="pill active" data-q="360">360p</button>
+        <button class="pill" data-q="480">480p</button>
+        <button class="pill" data-q="720">720p</button>
+      </div>
+      <div class="spacer"></div>
+      <span id="metaInfo">—</span>
+    </div>
+
+    <div class="progress" id="progress"><div id="progressBar"></div></div>
+    <div class="status" id="status"></div>
+
+    <div class="result" id="result"></div>
+
+    <div class="actions">
+      <button class="btn secondary" id="localBtn">Use local file…</button>
+      <button class="btn primary" id="grabBtn" disabled>Create GIF</button>
+    </div>
+
+    <input type="file" id="fileInput" accept="video/*" style="display:none">
+
+    <div class="hint" id="hint">
+      <b>Heads-up:</b> YouTube's iframe is cross-origin, so a browser can't read its pixels for canvas/GIF
+      (that's the <code>drawImage</code> error). The <b>“Use local file”</b> button runs the exact same pipeline
+      on a file you own, which works 100% in-browser with no server. The YouTube preview stays so the editor
+      feels the same.
+    </div>
+
+  </main>
+</div>
+
+<script src="https://cdnjs.cloudflare.com/ajax/libs/gif.js/0.2.0/gif.js"></script>
+<script>
+/* ---------------- tiny helpers ---------------- */
+const $ = id => document.getElementById(id);
+const status = t => $('status').textContent = t;
+const progress = p => {
+  $('progress').style.display = p == null ? 'none' : 'block';
+  if (p != null) $('progressBar').style.width = (p * 100).toFixed(1) + '%';
+};
+
+/* ---------------- state ---------------- */
+let ytPlayer = null;
+let ytReady  = false;
+let videoId  = null;
+let sourceMode = 'youtube';   // 'youtube' | 'local'
+let localVideoEl = null;
+let currentFilter = 'none';
+
+/* ---------------- YouTube iframe API ---------------- */
+(function loadYT(){
+  const s = document.createElement('script');
+  s.src = 'https://www.youtube.com/iframe_api';
+  document.head.appendChild(s);
+})();
+
+window.onYouTubeIframeAPIReady = () => {
+  if (videoId) createYT(videoId);
+};
+
+function extractId(url){
+  try{
+    const u = new URL(url);
+    if (u.hostname.includes('youtu.be')) return u.pathname.slice(1).split('/')[0];
+    if (u.searchParams.get('v')) return u.searchParams.get('v');
+    const m = u.pathname.match(/\/embed\/([^/?]+)/);
+    if (m) return m[1];
+  }catch{}
+  return null;
+}
+
+function createYT(id){
+  $('previewCard').innerHTML = '<div id="yt"></div>';
+  $('previewCard').style.aspectRatio = '16 / 9';
+  ytPlayer = new YT.Player('yt', {
+    videoId: id,
+    playerVars: { autoplay:1, controls:1, modestbranding:1, rel:0, playsinline:1 },
+    events:{
+      onReady: () => {
+        ytReady = true;
+        $('grabBtn').disabled = false;
+        status('Player ready. Pick a clip, then Create GIF (or use a local file).');
+        const dur = ytPlayer.getDuration();
+        $('start').max = Math.max(1, Math.floor(dur));
+        $('metaInfo').textContent = `${fmt(dur)} · ${id}`;
+      },
+      onError: e => status('YouTube player error: ' + e.data)
+    }
+  });
+}
+
+function fmt(s){
+  s = Math.max(0, s|0);
+  return `${Math.floor(s/60)}:${String(s%60).padStart(2,'0')}`;
+}
+
+/* ---------------- load button ---------------- */
+$('loadBtn').onclick = () => {
+  const id = extractId($('url').value.trim());
+  if (!id){ status('That doesn’t look like a YouTube URL.'); return; }
+  videoId = id;
+  sourceMode = 'youtube';
+  ytReady = false;
+  $('grabBtn').disabled = true;
+  $('result').classList.remove('show');
+  status('Loading player…');
+  if (window.YT && window.YT.Player) createYT(id);
+};
+
+/* ---------------- local file ---------------- */
+$('localBtn').onclick = () => $('fileInput').click();
+$('fileInput').onchange = e => {
+  const f = e.target.files[0];
+  if (!f) return;
+  sourceMode = 'local';
+  if (ytPlayer && ytPlayer.destroy){ ytPlayer.destroy(); ytPlayer = null; }
+  ytReady = false;
+
+  const url = URL.createObjectURL(f);
+  const card = $('previewCard');
+  card.innerHTML = '';
+  const v = document.createElement('video');
+  v.src = url; v.controls = true; v.loop = true; v.playsInline = true; v.muted = true;
+  v.style.cssText = 'position:absolute;inset:0;width:100%;height:100%;object-fit:contain;background:#000';
+  card.appendChild(v);
+  localVideoEl = v;
+
+  v.onloadedmetadata = () => {
+    $('start').max = Math.max(1, Math.floor(v.duration));
+    $('metaInfo').textContent = `${fmt(v.duration)} · local`;
+    $('grabBtn').disabled = false;
+    status('Local video loaded. Pick a clip and Create GIF.');
+  };
+};
+
+/* ---------------- slider UI sync ---------------- */
+function syncSlider(id, outId, unit){
+  const el = $(id);
+  const out = $(outId);
+  const update = () => {
+    out.textContent = unit === '×'
+      ? parseFloat(el.value).toFixed(1) + '×'
+      : parseFloat(el.value).toFixed(1) + 's';
+  };
+  el.addEventListener('input', update);
+  update();
+}
+syncSlider('start','startVal');
+syncSlider('duration','durationVal');
+syncSlider('speed','speedVal','×');
+
+document.querySelectorAll('.stepper button').forEach(btn => {
+  btn.onclick = () => {
+    const t = $(btn.dataset.target);
+    const step = parseFloat(btn.dataset.step);
+    t.value = Math.min(t.max, Math.max(t.min, parseFloat(t.value) + step));
+    t.dispatchEvent(new Event('input'));
+  };
+});
+
+/* ---------------- filters ---------------- */
+$('filters').onclick = e => {
+  const b = e.target.closest('.filter'); if (!b) return;
+  document.querySelectorAll('.filter').forEach(x => x.classList.remove('active'));
+  b.classList.add('active');
+  currentFilter = b.dataset.filter;
+};
+
+/* ---------------- quality pills ---------------- */
+$('qualityPills').onclick = e => {
+  const b = e.target.closest('.pill'); if (!b) return;
+  document.querySelectorAll('.pill').forEach(x => x.classList.remove('active'));
+  b.classList.add('active');
+  if (ytPlayer && ytPlayer.setPlaybackQuality){
+    const map = {'360':'small','480':'medium','720':'hd720'};
+    try{ ytPlayer.setPlaybackQuality(map[b.dataset.q]); }catch{}
+  }
+};
+
+/* =========================================================
+   CREATE GIF
+   ========================================================= */
+$('grabBtn').onclick = async () => {
+  const start    = parseFloat($('start').value);
+  const duration = parseFloat($('duration').value);
+  const speed    = parseFloat($('speed').value);
+  const fps      = Math.max(1, Math.min(24, parseInt($('fps').value) || 10));
+  const targetW  = Math.max(120, Math.min(960, parseInt($('width').value) || 480));
+  const pingpong = $('pingpong').checked;
+
+  // effective playback speed slows / speeds up frame spacing
+  const effectiveFps = fps * speed;
+  const frameCount = Math.max(1, Math.floor(duration * effectiveFps));
+
+  if (sourceMode === 'youtube'){
+    // honest failure path: show a clear message, not a silent TypeError
+    status(
+      'Browser security blocks reading YouTube pixels (cross-origin). ' +
+      'Use “Use local file…” — same pipeline, works instantly.'
+    );
+    return;
+  }
+
+  const v = localVideoEl;
+  if (!v || !v.duration){ status('Load a local video first.'); return; }
+
+  // canvas sized from video
+  const vw = v.videoWidth  || 1280;
+  const vh = v.videoHeight || 720;
+  const scale = targetW / vw;
+  const outW = Math.round(vw * scale);
+  const outH = Math.round(vh * scale);
+
+  const canvas = document.createElement('canvas');
+  canvas.width = outW; canvas.height = outH;
+  const ctx = canvas.getContext('2d');
+  ctx.filter = currentFilter;
+
+  const gif = new GIF({
+    workers: 2,
+    quality: 10,
+    width: outW, height: outH,
+    workerScript: 'https://cdnjs.cloudflare.com/ajax/libs/gif.js/0.2.0/gif.worker.js'
+  });
+
+  status(`Grabbing ${frameCount} frames…`);
+  progress(0);
+
+  // pause local video while we seek around
+  v.pause();
+
+  const frames = [];
+  for (let i = 0; i < frameCount; i++){
+    const t = start + i / effectiveFps;
+    await seek(v, t);
+    ctx.filter = currentFilter;
+    ctx.drawImage(v, 0, 0, outW, outH);
+    // snapshot as ImageData → ImageBitmap so gif.js doesn't reuse the canvas
+    const bmp = await createImageBitmap(canvas);
+    frames.push(bmp);
+    progress((i + 1) / frameCount);
+  }
+
+  // optional ping-pong: append reversed frames (skip first & last to avoid dupes)
+  if (pingpong && frames.length > 2){
+    for (let i = frames.length - 2; i > 0; i--) frames.push(frames[i]);
+  }
+
+  status('Encoding GIF…');
+  frames.forEach(bmp => {
+    gif.addFrame(bmp, { delay: Math.round(1000 / fps) });
+  });
+
+  gif.on('finished', blob => {
+    const url = URL.createObjectURL(blob);
+    const r = $('result');
+    r.innerHTML = `
+      <img src="${url}" alt="result">
+      <div style="display:flex;justify-content:space-between;align-items:center">
+        <span style="font-size:12px;color:var(--muted)">${(blob.size/1024).toFixed(0)} KB · ${frames.length} frames</span>
+        <a href="${url}" download="clip.gif">Download GIF ↓</a>
+      </div>`;
+    r.classList.add('show');
+    status('');
+    progress(null);
+  });
+
+  gif.render();
+};
+
+/* promise wrapper around video seek */
+function seek(video, time){
+  return new Promise(resolve => {
+    const done = () => {
+      video.removeEventListener('seeked', done);
+      resolve();
+    };
+    video.addEventListener('seeked', done);
+    video.currentTime = Math.min(time, (video.duration || 0) - 0.001);
+    // safety timeout
+    setTimeout(done, 1500);
+  });
+}
+</script>
+</body>
+</html>
